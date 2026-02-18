@@ -1,0 +1,35 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Javalin web framework
+    implementation 'io.javalin:javalin:6.4.0'
+    
+    // Database: JDBI for easy transactions and PostgreSQL
+    implementation 'org.jdbi:jdbi3-core:3.45.1'
+    implementation 'org.jdbi:jdbi3-sqlobject:3.45.1'
+    implementation 'org.postgresql:postgresql:42.7.4'
+    
+    // JSON support
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+    
+    // Logging (Javalin requirement)
+    implementation 'org.slf4j:slf4j-simple:2.0.16'
+}
+
+application {
+    mainClass = 'com.example.App'
+}
+
+tasks.withType(JavaCompile) {
+    options.release = 21
+}
