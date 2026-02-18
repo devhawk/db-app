@@ -3,20 +3,32 @@ package com.example;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.jdbi.v3.core.Jdbi;
+import org.jdbi.v3.core.mapper.reflect.ConstructorMapper;
 import org.jdbi.v3.sqlobject.SqlObjectPlugin;
 
 import java.util.List;
 import java.util.Map;
 
+import org.jdbi.v3.core.Handle;
+import org.jdbi.v3.core.statement.UnableToExecuteStatementException;
+
 public class App {
     public static void main(String[] args) {
         // 1. Setup JDBI with PostgreSQL
-        String url = System.getenv().getOrDefault("DB_URL", "jdbc:postgresql://localhost:5432/bank");
+        String host = System.getenv().getOrDefault("DB_HOST", "localhost:5432");
         String user = System.getenv().getOrDefault("PGUSER", "postgres");
         String password = System.getenv().getOrDefault("PGPASSWORD", "postgres");
+        String dbName = System.getenv().getOrDefault("DB_NAME", "bank");
         
+        // Ensure the database exists
+        ensureDatabaseExists(host, user, password, dbName);
+        
+        String url = System.getenv().getOrDefault("DB_URL", "jdbc:postgresql://" + host + "/" + dbName);
         var jdbi = Jdbi.create(url, user, password);
         jdbi.installPlugin(new SqlObjectPlugin());
+        
+        // Register mapper for Account record
+        jdbi.registerRowMapper(Account.class, ConstructorMapper.of(Account.class));
 
         // Initialize Database Schema
         jdbi.useHandle(handle -> {
@@ -32,16 +44,12 @@ public class App {
         });
 
         // 2. Setup Javalin
-        var app = Javalin.create()
+        Javalin.create()
             .get("/", ctx -> ctx.result("Java DB-backed Web App (Javalin + JDBI)"))
             
             // List all accounts
             .get("/accounts", ctx -> {
-                List<Account> accounts = jdbi.withHandle(handle ->
-                    handle.createQuery("SELECT * FROM accounts")
-                        .mapTo(Account.class)
-                        .list()
-                );
+                List<Account> accounts = jdbi.withHandle(handle -> getAllAccounts(handle));
                 ctx.json(accounts);
             })
 
@@ -53,25 +61,8 @@ public class App {
                 
                 try {
                     jdbi.useTransaction(handle -> {
-                        // 1. Deduct from sender
-                        int updatedFrom = handle.createUpdate("UPDATE accounts SET balance = balance - :amount WHERE id = :id AND balance >= :amount")
-                            .bind("id", body.from())
-                            .bind("amount", body.amount())
-                            .execute();
-
-                        if (updatedFrom == 0) {
-                            throw new RuntimeException("Insufficient funds or sender not found");
-                        }
-
-                        // 2. Add to receiver
-                        int updatedTo = handle.createUpdate("UPDATE accounts SET balance = balance + :amount WHERE id = :id")
-                            .bind("id", body.to())
-                            .bind("amount", body.amount())
-                            .execute();
-
-                        if (updatedTo == 0) {
-                            throw new RuntimeException("Receiver not found");
-                        }
+                        deductFromAccount(handle, body.from(), body.amount());
+                        addToAccount(handle, body.to(), body.amount());
                     });
                     
                     ctx.status(HttpStatus.OK).json(Map.of("message", "Transfer successful"));
@@ -84,17 +75,95 @@ public class App {
                     final String finalError = errorMessage;
                     // Log the transfer attempt outside the main transaction
                     jdbi.useHandle(handle -> 
-                        handle.createUpdate("INSERT INTO transfer_log (from_account, to_account, amount, status, error_message) VALUES (:from, :to, :amount, :status, :error)")
-                            .bind("from", body.from())
-                            .bind("to", body.to())
-                            .bind("amount", body.amount())
-                            .bind("status", finalStatus)
-                            .bind("error", finalError)
-                            .execute()
+                        logTransfer(handle, body.from(), body.to(), body.amount(), finalStatus, finalError)
                     );
                 }
             })
             .start(7070);
+    }
+
+    /**
+     * Ensures the specified database exists by connecting to the PostgreSQL server
+     * and creating it if necessary.
+     */
+    private static void ensureDatabaseExists(String host, String user, String password, String dbName) {
+        String adminUrl = "jdbc:postgresql://" + host + "/postgres";
+        var adminJdbi = Jdbi.create(adminUrl, user, password);
+        
+        adminJdbi.useHandle(handle -> {
+            try {
+                // Check if database exists
+                Integer count = handle.createQuery("SELECT 1 FROM pg_database WHERE datname = ?")
+                    .bind(0, dbName)
+                    .mapTo(Integer.class)
+                    .findOne()
+                    .orElse(0);
+                
+                if (count == 0) {
+                    // Database doesn't exist, create it
+                    System.out.println("Creating database: " + dbName);
+                    handle.execute("CREATE DATABASE " + dbName);
+                    System.out.println("Database " + dbName + " created successfully");
+                } else {
+                    System.out.println("Database " + dbName + " already exists");
+                }
+            } catch (UnableToExecuteStatementException e) {
+                System.err.println("Failed to create database " + dbName + ": " + e.getMessage());
+                throw e;
+            }
+        });
+    }
+    
+    /**
+     * Retrieves all accounts from the database.
+     */
+    private static List<Account> getAllAccounts(Handle handle) {
+        return handle.createQuery("SELECT * FROM accounts")
+            .mapTo(Account.class)
+            .list();
+    }
+    
+    /**
+     * Deducts an amount from an account's balance.
+     * Throws RuntimeException if insufficient funds or account not found.
+     */
+    private static void deductFromAccount(Handle handle, long accountId, double amount) {
+        int updated = handle.createUpdate("UPDATE accounts SET balance = balance - :amount WHERE id = :id AND balance >= :amount")
+            .bind("id", accountId)
+            .bind("amount", amount)
+            .execute();
+        
+        if (updated == 0) {
+            throw new RuntimeException("Insufficient funds or sender not found");
+        }
+    }
+    
+    /**
+     * Adds an amount to an account's balance.
+     * Throws RuntimeException if account not found.
+     */
+    private static void addToAccount(Handle handle, long accountId, double amount) {
+        int updated = handle.createUpdate("UPDATE accounts SET balance = balance + :amount WHERE id = :id")
+            .bind("id", accountId)
+            .bind("amount", amount)
+            .execute();
+        
+        if (updated == 0) {
+            throw new RuntimeException("Receiver not found");
+        }
+    }
+    
+    /**
+     * Logs a transfer attempt to the transfer_log table.
+     */
+    private static void logTransfer(Handle handle, long fromAccount, long toAccount, double amount, String status, String errorMessage) {
+        handle.createUpdate("INSERT INTO transfer_log (from_account, to_account, amount, status, error_message) VALUES (:from, :to, :amount, :status, :error)")
+            .bind("from", fromAccount)
+            .bind("to", toAccount)
+            .bind("amount", amount)
+            .bind("status", status)
+            .bind("error", errorMessage)
+            .execute();
     }
 
     // Helper class for JSON body

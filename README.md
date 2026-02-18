@@ -28,16 +28,12 @@ This operation is transactional. If either the sender has insufficient funds or 
 
 **Successful Transfer:**
 ```bash
-curl -X POST http://localhost:7070/transfer 
-     -H "Content-Type: application/json" 
-     -d '{"from": 1, "to": 2, "amount": 100.0}'
+curl -X POST http://localhost:7070/transfer -H "Content-Type: application/json" -d '{"from": 1, "to": 2, "amount": 100.0}'
 ```
 
 **Failed Transfer (Insufficient Funds):**
 ```bash
-curl -X POST http://localhost:7070/transfer 
-     -H "Content-Type: application/json" 
-     -d '{"from": 1, "to": 2, "amount": 10000.0}'
+curl -X POST http://localhost:7070/transfer -H "Content-Type: application/json"  -d '{"from": 1, "to": 2, "amount": 10000.0}'
 ```
 
 ## Tech Stack
