@@ -39,5 +39,4 @@ curl -X POST http://localhost:7070/transfer -H "Content-Type: application/json" 
 ## Tech Stack
 - **Javalin**: Web framework.
 - **JDBI**: Declarative and imperative database access.
-- **H2**: In-memory SQL database.
 - **Jackson**: JSON processing.
