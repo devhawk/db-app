@@ -19,6 +19,9 @@ dependencies {
     implementation 'org.jdbi:jdbi3-sqlobject:3.45.1'
     implementation 'org.postgresql:postgresql:42.7.4'
     
+    // DBOS SDK
+    implementation 'dev.dbos:transact:+'
+    
     // JSON support
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
     
